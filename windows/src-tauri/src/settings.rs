@@ -39,7 +39,7 @@ impl Default for Settings {
                 "integration_vercel".into(),
                 "integration_github".into(),
             ],
-            screen: "cursor".into(),
+            screen: "primary".into(),
             autostart: false,
             hooks_installed: false,
             model: default_model(),

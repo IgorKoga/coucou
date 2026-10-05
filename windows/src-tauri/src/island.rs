@@ -105,25 +105,9 @@ pub fn window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(WINDOW_LABEL)
 }
 
-fn monitor_contains(m: &Monitor, x: f64, y: f64) -> bool {
-    let p = m.position();
-    let s = m.size();
-    x >= p.x as f64
-        && x < (p.x + s.width as i32) as f64
-        && y >= p.y as f64
-        && y < (p.y + s.height as i32) as f64
-}
-
-/// The display the island lives on: the primary one, or the one under the cursor.
-fn target_monitor(app: &AppHandle, pref: &str) -> Option<Monitor> {
+/// The display the island lives on: always the primary monitor.
+fn target_monitor(app: &AppHandle, _pref: &str) -> Option<Monitor> {
     let monitors = app.available_monitors().ok()?;
-    if pref == "cursor" {
-        if let Some((cx, cy)) = cursor_physical() {
-            if let Some(m) = monitors.iter().find(|m| monitor_contains(m, cx, cy)) {
-                return Some(m.clone());
-            }
-        }
-    }
     app.primary_monitor()
         .ok()
         .flatten()
@@ -199,7 +183,6 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
         // Remembered across wakes so a display change while hidden is noticed the
         // moment the island comes back.
         let mut last_screen: Option<(i32, i32, u32, u32, u64)> = None;
-        let mut last_mon_id: Option<(i32, i32)> = None;
         // Without a cursor to read (Linux) the loop only watches the display
         // layout, and twice a second is plenty for that: waking at 60 Hz just to
         // find no cursor costs CPU for nothing.
@@ -234,38 +217,25 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                 let pref = app
                     .try_state::<crate::Shared>()
                     .map(|s| s.settings.lock().unwrap().screen.clone())
-                    .unwrap_or_else(|| "cursor".into());
+                    .unwrap_or_else(|| "primary".into());
 
                 let collapsed = gate.collapsed.load(Ordering::Relaxed);
 
-                if let Ok(monitors) = app.available_monitors() {
-                    if let Some(m) = monitors.iter().find(|m| monitor_contains(m, cx, cy)) {
+                if collapsed {
+                    if let Some(m) = target_monitor(&app, &pref) {
                         let pos = m.position();
                         let size = m.size();
                         let scale = m.scale_factor();
-                        let mon_id = (pos.x, pos.y);
-
-                        if pref == "cursor" && (last_mon_id.is_none() || last_mon_id != Some(mon_id)) {
-                            last_mon_id = Some(mon_id);
-                            let app_handle = app.clone();
-                            let pref_clone = pref.clone();
-                            let _ = app.run_on_main_thread(move || {
-                                apply_geometry(&app_handle, &pref_clone, collapsed);
-                            });
+                        let rel_y = cy - pos.y as f64;
+                        let rel_x = cx - pos.x as f64;
+                        let is_top = rel_y >= 0.0 && rel_y <= 24.0 * scale && rel_x >= 0.0 && rel_x <= size.width as f64;
+                        if is_top && !was_top_hover {
+                            let _ = app.emit_to(WINDOW_LABEL, "top-hover", ());
                         }
-
-                        if collapsed {
-                            let rel_y = cy - pos.y as f64;
-                            let rel_x = cx - pos.x as f64;
-                            let is_top = rel_y >= 0.0 && rel_y <= 24.0 * scale && rel_x >= 0.0 && rel_x <= size.width as f64;
-                            if is_top && !was_top_hover {
-                                let _ = app.emit_to(WINDOW_LABEL, "top-hover", ());
-                            }
-                            was_top_hover = is_top;
-                        } else {
-                            was_top_hover = false;
-                        }
+                        was_top_hover = is_top;
                     }
+                } else {
+                    was_top_hover = false;
                 }
 
                 let Ok(origin) = win.outer_position() else { continue };

@@ -177,6 +177,7 @@ const MODELS: [string, string][] = [
   ["claude-opus-5", "Claude Opus 5"],
   ["claude-sonnet-5", "Claude Sonnet 5"],
   ["claude-haiku-4-5", "Claude Haiku 4.5"],
+  ["gemini-3.6-flash", "Gemini 3.6 Flash"],
   ["gemini-2.5-flash", "Gemini 2.5 Flash"],
   ["gemini-2.5-pro", "Gemini 2.5 Pro"],
   ["gemini-1.5-flash", "Gemini 1.5 Flash"],

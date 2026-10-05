@@ -4,6 +4,7 @@ NotchBuddy/NotchBuddy.xcodeproj/project.xcworkspace/xcuserdata/
 NotchBuddy/NotchBuddy.xcodeproj/xcuserdata/
 NotchBuddy/NotchBuddy.xcodeproj/xcshareddata/
 *.xcuserstate
+*.exe
 
 # Xcode DerivedData (outside repo — listed for clarity)
 DerivedData/
