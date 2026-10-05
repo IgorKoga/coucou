@@ -68,6 +68,51 @@ pub fn ingest(source: &str) -> Result<DroppedFile, String> {
     })
 }
 
+pub fn ingest_text(name: &str, content: &str) -> Result<DroppedFile, String> {
+    ingest_bytes(name, content.as_bytes())
+}
+
+pub fn ingest_bytes(name: &str, bytes: &[u8]) -> Result<DroppedFile, String> {
+    let dir = inbox_dir();
+    crate::platform::ensure_private_dir(&settings::local_dir()).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let base_name = if name.trim().is_empty() {
+        "code_snippet.txt".to_string()
+    } else {
+        Path::new(name)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "code_snippet.txt".into())
+    };
+
+    let mut dest = dir.join(&base_name);
+    if dest.exists() {
+        let p = Path::new(&base_name);
+        let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "snippet".into());
+        let ext = p.extension().map(|s| format!(".{}", s.to_string_lossy())).unwrap_or_default();
+        for i in 2..1000 {
+            let candidate = dir.join(format!("{stem} ({i}){ext}"));
+            if !candidate.exists() {
+                dest = candidate;
+                break;
+            }
+        }
+    }
+
+    std::fs::write(&dest, bytes).map_err(|e| format!("cannot write file: {e}"))?;
+    if let Ok(file) = std::fs::File::options().write(true).open(&dest) {
+        let _ = file.set_modified(SystemTime::now());
+    }
+    sweep(&dir);
+
+    Ok(DroppedFile {
+        name: dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(base_name),
+        path: dest.to_string_lossy().to_string(),
+        size: bytes.len() as u64,
+    })
+}
+
 /// Drops anything copied here more than a week ago. `ingest` stamps every copy
 /// with the time it landed, so this really is the age of the copy and not the
 /// age of whatever the user happened to drag in.

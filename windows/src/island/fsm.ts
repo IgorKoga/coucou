@@ -66,7 +66,7 @@ export class IslandStateMachine {
   }
 
   click() {
-    if (this.state !== "petit") return;
+    if (this.state !== "petit" && this.state !== "hidden") return;
     this.cancelTimers();
     this.transition("home");
   }

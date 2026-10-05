@@ -39,12 +39,12 @@ function contextChip(label: string): HTMLElement {
 export function buildPrompt(onHeightChange: () => void): ViewHost {
   const chipRow = h("div", { class: "chip-row" });
   const log = h("div", { class: "chat-log" });
-  const input = h("input", {
-    type: "text",
+  const input = h("textarea", {
     class: "chat-input",
-    placeholder: "Ask me anything…",
+    placeholder: "Ask me anything… (Shift+Enter for newline)",
     spellcheck: "false",
-  }) as HTMLInputElement;
+    rows: "1",
+  }) as HTMLTextAreaElement;
   const send = h("button", { class: "send-btn", title: "Send" }, svg(ICONS.arrowUp, 11));
   const bar = h("div", { class: "chat-bar" }, input, send);
 
@@ -55,6 +55,14 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   );
   (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(99,102,241,0.5)");
 
+  const adjustHeight = () => {
+    input.style.height = "auto";
+    const newH = Math.min(input.scrollHeight, 120);
+    input.style.height = `${newH}px`;
+    onHeightChange();
+  };
+  input.addEventListener("input", adjustHeight);
+
   let sending = false;
   let renderedCount = -1;
 
@@ -62,6 +70,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     const query = input.value.trim();
     if (!query || sending) return;
     input.value = "";
+    input.style.height = "auto";
     sending = true;
     Sound.play("send");
 
@@ -94,11 +103,58 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
 
   send.addEventListener("click", () => void submit());
   input.addEventListener("keydown", (e) => {
-    if ((e as KeyboardEvent).key === "Enter") {
+    if ((e as KeyboardEvent).key === "Enter" && !(e as KeyboardEvent).shiftKey) {
       e.preventDefault();
       void submit();
     }
     e.stopPropagation(); // Escape closes the island, not the chat
+  });
+
+  el.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+
+  el.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      const path = (file as any).path;
+      if (path) {
+        try {
+          const ingested = await Bridge.ingestFile(path);
+          State.droppedFile = { name: ingested.name, path: ingested.path };
+          State.promptContext = { kind: "file", name: ingested.name, path: ingested.path };
+          Sound.play("approve");
+          State.notify();
+          onHeightChange();
+          return;
+        } catch {}
+      }
+      try {
+        const buf = await file.arrayBuffer();
+        const ingested = await Bridge.ingestFileData(file.name, Array.from(new Uint8Array(buf)));
+        State.droppedFile = { name: ingested.name, path: ingested.path };
+        State.promptContext = { kind: "file", name: ingested.name, path: ingested.path };
+        Sound.play("approve");
+        State.notify();
+        onHeightChange();
+        return;
+      } catch {}
+    }
+    const text = e.dataTransfer?.getData("text/plain");
+    if (text && text.trim().length > 0) {
+      try {
+        const ingested = await Bridge.ingestSnippet("code_snippet.txt", text);
+        State.droppedFile = { name: ingested.name, path: ingested.path };
+        State.promptContext = { kind: "file", name: ingested.name, path: ingested.path };
+        Sound.play("approve");
+        State.notify();
+        onHeightChange();
+      } catch {}
+    }
   });
 
   return {

@@ -65,6 +65,7 @@ export const EXPANDED_CORNER = 22;
 /** Invisible hover strip that wakes the island when hidden. */
 export const WAKE_STRIP_W = 240;
 export const WAKE_STRIP_H = 6;
+export const STRIP_W = 360;
 
 export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   overview: { height: 160, botX: 68, botY: null, botDiameter: 58, agentMode: "pills" },
@@ -101,14 +102,18 @@ export function islandSize(
   mode: IslandMode,
   view: IslandViewName,
   chatCount = 0,
+  topBar = 0,
 ): { w: number; h: number } {
   switch (mode) {
     case "hidden":
-      // No notch to hide inside on a PC: the island retracts to zero height and
-      // slides into the top edge of the screen instead of sitting there as a bar.
+      // If a top AppBar (e.g. PowerToys Command Palette Dock) is active,
+      // stay nestled inside the dock rather than retracting to zero height.
+      if (topBar > 0) {
+        return { w: COMPACT_W, h: topBar };
+      }
       return { w: NOTCH_W, h: 0 };
     case "compact":
-      return { w: COMPACT_W, h: NOTCH_H };
+      return { w: COMPACT_W, h: topBar > 0 ? topBar : NOTCH_H };
     case "expanded": {
       const h = view === "prompt" ? chatPromptHeight(chatCount) : VIEW_LAYOUTS[view].height;
       return { w: EXPANDED_W, h };
@@ -129,12 +134,16 @@ export function botPosition(
   view: IslandViewName,
   islandH: number,
   uploadProgress = 0,
+  topBar = 0,
 ): BotPlacement {
   switch (mode) {
     case "hidden":
+      if (topBar > 0) {
+        return { cx: 40, cy: topBar / 2, diameter: 20, opacity: 1 };
+      }
       return { cx: 46, cy: 16, diameter: 6, opacity: 0 };
     case "compact":
-      return { cx: 40, cy: 16, diameter: 20, opacity: 1 };
+      return { cx: 40, cy: islandH > 0 ? islandH / 2 : (topBar > 0 ? topBar / 2 : 16), diameter: 20, opacity: 1 };
     case "expanded": {
       const layout = VIEW_LAYOUTS[view];
       if (view === "uploading") {

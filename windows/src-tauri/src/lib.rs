@@ -256,6 +256,18 @@ fn ingest_file(path: String) -> Result<DroppedFile, String> {
     files::ingest(&path)
 }
 
+/// Ingests a text or code snippet into the inbox.
+#[tauri::command]
+fn ingest_snippet(name: String, content: String) -> Result<DroppedFile, String> {
+    files::ingest_text(&name, &content)
+}
+
+/// Ingests raw file bytes (e.g. from an HTML5 drop event) into the inbox.
+#[tauri::command]
+fn ingest_file_data(name: String, data: Vec<u8>) -> Result<DroppedFile, String> {
+    files::ingest_bytes(&name, &data)
+}
+
 /// The island may only ask whether a key exists — never read it.
 #[tauri::command]
 fn secret_present(key: String) -> bool {
@@ -394,6 +406,8 @@ pub fn run() {
             chat_send,
             chat_reset,
             ingest_file,
+            ingest_snippet,
+            ingest_file_data,
             secret_present,
             secret_set,
             secret_clear,

@@ -23,7 +23,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T |
 export interface BootInfo {
   settings: Settings;
   /** Logical screen rect of the monitor the island lives on. */
-  screen: { x: number; y: number; width: number; height: number; scale: number };
+  screen: { x: number; y: number; width: number; height: number; scale: number; topBar?: number };
   version: string;
   hookPath: string;
   /** False where the OS has no global cursor (Wayland): see Island.followPageCursor. */
@@ -87,6 +87,12 @@ export const Bridge = {
   chatReset: () => call<void>("chat_reset"),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
+  /** Ingests a text or code snippet into the inbox. */
+  ingestSnippet: (name: string, content: string) =>
+    callOrThrow<DroppedFile>("ingest_snippet", { name, content }),
+  /** Ingests raw file bytes into the inbox. */
+  ingestFileData: (name: string, data: number[]) =>
+    callOrThrow<DroppedFile>("ingest_file_data", { name, data }),
   /** Only ever tells you whether a key exists — never its value. */
   secretPresent: (key: string) => call<boolean>("secret_present", { key }),
   secretSet: (key: string, value: string) => callOrThrow<void>("secret_set", { key, value }),

@@ -5,7 +5,7 @@ import { Tracked, Spring, clamp } from "../core/anim";
 import { Bridge, IS_TAURI, onDragDrop } from "../core/bridge";
 import {
   EXPANDED_CORNER, EXPANDED_W, NOTCH_W, PANEL_H, PANEL_W,
-  ROUNDED_CORNER, VIEW_LAYOUTS, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
+  ROUNDED_CORNER, STRIP_W, VIEW_LAYOUTS, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
   islandSize,
   type IslandMode, type IslandViewName,
 } from "../core/layout";
@@ -421,6 +421,82 @@ export class Island {
   }
 
   /**
+   * Mochi eats a code snippet or text.
+   */
+  private swallowSnippet(name: string, content: string) {
+    State.droppedFile = { name, path: "" };
+    State.promptContext = { kind: "file", name, path: "" };
+    State.chatHistory = [];
+    void Bridge.chatReset();
+
+    UploadSeq.performDrop(State.uploadDuration);
+    this.uploadTens = 0;
+    this.uploadDone = false;
+
+    this.engine.gulp();
+    Sound.play("approve");
+    this.engine.triggerEmote("happy");
+    this.engine.animateMorph(0);
+
+    State.uploadProgress = 0;
+    this.setView("uploading");
+    this.ensureRunning();
+
+    void Bridge.ingestSnippet(name, content)
+      .then((file) => {
+        State.droppedFile = { name: file.name, path: file.path };
+        State.promptContext = { kind: "file", name: file.name, path: file.path };
+        State.notify();
+      })
+      .catch((err) => {
+        UploadSeq.deactivate();
+        State.noteMessage = String(err).replace(/^Error:\s*/, "");
+        this.engine.animateMorph(0);
+        this.setView("note");
+        Sound.play("error");
+        window.setTimeout(() => this.setView(State.defaultView()), 2400);
+      });
+  }
+
+  /**
+   * Mochi eats dropped file data (when path is unavailable in HTML5 drop).
+   */
+  private swallowData(name: string, data: number[]) {
+    State.droppedFile = { name, path: "" };
+    State.promptContext = { kind: "file", name, path: "" };
+    State.chatHistory = [];
+    void Bridge.chatReset();
+
+    UploadSeq.performDrop(State.uploadDuration);
+    this.uploadTens = 0;
+    this.uploadDone = false;
+
+    this.engine.gulp();
+    Sound.play("approve");
+    this.engine.triggerEmote("happy");
+    this.engine.animateMorph(0);
+
+    State.uploadProgress = 0;
+    this.setView("uploading");
+    this.ensureRunning();
+
+    void Bridge.ingestFileData(name, data)
+      .then((file) => {
+        State.droppedFile = { name: file.name, path: file.path };
+        State.promptContext = { kind: "file", name: file.name, path: file.path };
+        State.notify();
+      })
+      .catch((err) => {
+        UploadSeq.deactivate();
+        State.noteMessage = String(err).replace(/^Error:\s*/, "");
+        this.engine.animateMorph(0);
+        this.setView("note");
+        Sound.play("error");
+        window.setTimeout(() => this.setView(State.defaultView()), 2400);
+      });
+  }
+
+  /**
    * Sounds and view changes hung off the canvas timeline: a `tick` every 10 %,
    * the ✓ chime when the bar completes, then `choose` once Mochi has grown back.
    */
@@ -450,9 +526,13 @@ export class Island {
   // ── Geometry ────────────────────────────────────────────────────────────────
 
   private targetSize(): { w: number; h: number; r: number } {
-    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length);
+    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, State.topBar);
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
+  }
+
+  updateGeometry() {
+    this.animateGeometry(false);
   }
 
   private animateGeometry(shrinking: boolean) {
@@ -484,7 +564,9 @@ export class Island {
     this.greetingCanvas.style.left = `${(w - EXPANDED_W) / 2}px`;
     this.uploadCanvas.el.style.left = `${(w - EXPANDED_W) / 2}px`;
 
-    const rect = { x: (PANEL_W - w) / 2, y: 0, w, h: hh };
+    const rect = this.collapsed
+      ? { x: 0, y: 0, w: STRIP_W, h: hh }
+      : { x: (PANEL_W - w) / 2, y: 0, w, h: hh };
     const p = this.pushedRect;
     if (Math.abs(p.x - rect.x) > 0.5 || Math.abs(p.w - rect.w) > 0.5 || Math.abs(p.h - rect.h) > 0.5) {
       this.pushedRect = rect;
@@ -492,11 +574,13 @@ export class Island {
     }
   }
 
-  /** Island rect in window coordinates (origin top-left of the 720×320 window). */
+  /** Island rect in window coordinates (origin top-left of the window). */
   private islandRect(): { x: number; y: number; w: number; h: number } {
     const w = this.width.value;
     const hh = this.height.value;
-    return { x: (PANEL_W - w) / 2, y: 0, w, h: hh };
+    return this.collapsed
+      ? { x: 0, y: 0, w: STRIP_W, h: hh }
+      : { x: (PANEL_W - w) / 2, y: 0, w, h: hh };
   }
 
   // ── Window collapse (hidden → tiny wake strip, zero polling) ────────────────
@@ -549,7 +633,110 @@ export class Island {
       State.lastActivity = performance.now();
     });
 
-    void onDragDrop((e) => this.onDragDrop(e));
+    let lastDropTime = 0;
+
+    window.addEventListener("dragenter", (e) => {
+      e.preventDefault();
+      void Bridge.log(`html5 dragenter files=${e.dataTransfer?.files?.length ?? 0}`);
+      if (State.paused) return;
+      if (!State.fileDragOver) {
+        State.fileDragOver = true;
+        this.engine.animateMorph(1);
+        UploadSeq.enterZone(State.mouseInIsland.x, State.mouseInIsland.y);
+        this.alert("upload");
+      }
+    });
+
+    window.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = "copy";
+      }
+      if (State.paused) return;
+      if (!State.fileDragOver) {
+        State.fileDragOver = true;
+        this.engine.animateMorph(1);
+        UploadSeq.enterZone(State.mouseInIsland.x, State.mouseInIsland.y);
+        this.alert("upload");
+      }
+    });
+
+    window.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      if (e.relatedTarget === null) {
+        if (!State.fileDragOver) return;
+        State.fileDragOver = false;
+        this.engine.animateMorph(0);
+        UploadSeq.exitZone();
+        State.notify();
+      }
+    });
+
+    window.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      State.fileDragOver = false;
+      const now = performance.now();
+      if (now - lastDropTime < 600) return;
+      lastDropTime = now;
+
+      const fileCount = e.dataTransfer?.files?.length ?? 0;
+      void Bridge.log(`html5 drop files=${fileCount}`);
+
+      // 1. Check for dropped files
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        const file = files[0];
+        const path = (file as any).path;
+        if (path) {
+          this.swallow(path);
+          return;
+        }
+        try {
+          const buffer = await file.arrayBuffer();
+          const bytes = Array.from(new Uint8Array(buffer));
+          this.swallowData(file.name, bytes);
+          return;
+        } catch {
+          try {
+            const text = await file.text();
+            this.swallowSnippet(file.name, text);
+            return;
+          } catch {}
+        }
+      }
+
+      // 2. Check for dropped text or code snippets
+      const text = e.dataTransfer?.getData("text/plain");
+      if (text && text.trim().length > 0) {
+        let name = "code_snippet.txt";
+        const trimmed = text.trim();
+        if (trimmed.startsWith("def ") || trimmed.includes("print(") || trimmed.includes("import sys") || trimmed.includes("import os")) {
+          name = "code_snippet.py";
+        } else if (trimmed.includes("function") || trimmed.includes("const ") || trimmed.includes("let ") || trimmed.includes("console.log") || trimmed.includes("=>")) {
+          name = "code_snippet.js";
+        } else if (trimmed.startsWith("<") && trimmed.endsWith(">")) {
+          name = "code_snippet.html";
+        } else if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+          name = "code_snippet.json";
+        } else if (trimmed.includes("fn ") || trimmed.includes("pub ") || trimmed.includes("impl ")) {
+          name = "code_snippet.rs";
+        }
+        this.swallowSnippet(name, text);
+        return;
+      }
+
+      this.engine.animateMorph(0);
+      this.setView(State.defaultView());
+    });
+
+    void onDragDrop((e) => {
+      if (e.type === "drop") {
+        const now = performance.now();
+        if (now - lastDropTime < 600) return;
+        lastDropTime = now;
+      }
+      this.onDragDrop(e);
+    });
 
     // Outside Tauri (plain browser) drive the cursor from DOM events so the
     // island can be inspected with `npm run dev`.
@@ -744,7 +931,7 @@ export class Island {
   };
 
   private updateBotTargets() {
-    const p = botPosition(State.mode, State.view, this.height.value, State.uploadProgress);
+    const p = botPosition(State.mode, State.view, this.height.value, State.uploadProgress, State.topBar);
     this.botCx.target = p.cx;
     this.botCy.target = p.cy;
     this.botSize.target = p.diameter / 0.6;
@@ -861,7 +1048,7 @@ export class Island {
     }
 
     // Compact mini grid
-    const showGrid = State.mode === "compact";
+    const showGrid = State.mode === "compact" || (State.mode === "hidden" && State.topBar > 0);
     this.miniGrid.style.opacity = showGrid ? "1" : "0";
     if (showGrid) {
       const others = State.otherTasks.slice(0, 4);

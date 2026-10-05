@@ -40,6 +40,8 @@ pub struct ScreenInfo {
     pub width: f64,
     pub height: f64,
     pub scale: f64,
+    #[serde(rename = "topBar")]
+    pub top_bar: f64,
 }
 
 /// The island shape in window-logical coordinates, pushed by the front end.
@@ -115,6 +117,7 @@ fn target_monitor(app: &AppHandle, _pref: &str) -> Option<Monitor> {
 }
 
 pub fn screen_info(app: &AppHandle, pref: &str) -> ScreenInfo {
+    let top_bar_phys = platform::top_bar_height();
     match target_monitor(app, pref) {
         Some(m) => {
             let scale = m.scale_factor();
@@ -126,9 +129,17 @@ pub fn screen_info(app: &AppHandle, pref: &str) -> ScreenInfo {
                 width: s.width as f64 / scale,
                 height: s.height as f64 / scale,
                 scale,
+                top_bar: top_bar_phys as f64 / scale,
             }
         }
-        None => ScreenInfo { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0, scale: 1.0 },
+        None => ScreenInfo {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+            scale: 1.0,
+            top_bar: top_bar_phys as f64,
+        },
     }
 }
 
@@ -140,8 +151,18 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: bool) {
     let scale = m.scale_factor();
     let mp = *m.position();
     let ms = *m.size();
+    let top_bar = platform::top_bar_height();
 
-    let (lw, lh) = if collapsed { (STRIP_W, STRIP_H) } else { (PANEL_W, PANEL_H) };
+    let (lw, lh) = if collapsed {
+        let h = if top_bar > 0 {
+            (top_bar as f64 / scale).max(STRIP_H)
+        } else {
+            STRIP_H
+        };
+        (STRIP_W, h)
+    } else {
+        (PANEL_W, PANEL_H)
+    };
     let pw = (lw * scale).round().max(1.0) as u32;
     let ph = (lh * scale).round().max(1.0) as u32;
     let x = mp.x + (ms.width as i32 - pw as i32) / 2;
@@ -171,7 +192,14 @@ fn current_screen_key(app: &AppHandle) -> Option<(i32, i32, u32, u32, u64)> {
     let m = target_monitor(app, &pref)?;
     let p = m.position();
     let size = m.size();
-    Some((p.x, p.y, size.width, size.height, m.scale_factor().to_bits()))
+    let top_bar = platform::top_bar_height();
+    Some((
+        p.x,
+        p.y,
+        size.width,
+        size.height,
+        top_bar as u64 | (m.scale_factor().to_bits() << 32),
+    ))
 }
 
 /// Emits `cursor` (window-logical coordinates) at ~60 Hz while the island is
@@ -226,9 +254,32 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                         let pos = m.position();
                         let size = m.size();
                         let scale = m.scale_factor();
+                        let top_bar = platform::top_bar_height();
+
                         let rel_y = cy - pos.y as f64;
                         let rel_x = cx - pos.x as f64;
-                        let is_top = rel_y >= 0.0 && rel_y <= 24.0 * scale && rel_x >= 0.0 && rel_x <= size.width as f64;
+
+                        // Only the central region where Coucou lives is sensitive,
+                        // rather than the entire width of the screen.
+                        let island_w = STRIP_W * scale;
+                        let island_left = (size.width as f64 - island_w) / 2.0;
+                        let island_right = island_left + island_w;
+
+                        let max_y = if top_bar > 0 {
+                            top_bar as f64
+                        } else {
+                            24.0 * scale
+                        };
+
+                        let down = left_button_down();
+                        let is_top = if down {
+                            let drag_max_y = (max_y * 2.5).max(80.0 * scale);
+                            let drag_left = island_left - 40.0 * scale;
+                            let drag_right = island_right + 40.0 * scale;
+                            rel_y >= 0.0 && rel_y <= drag_max_y && rel_x >= drag_left && rel_x <= drag_right
+                        } else {
+                            rel_y >= 0.0 && rel_y <= max_y && rel_x >= island_left && rel_x <= island_right
+                        };
                         if is_top && !was_top_hover {
                             let _ = app.emit_to(WINDOW_LABEL, "top-hover", ());
                         }
@@ -278,10 +329,10 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                 was_down = down;
 
                 let dragging = down
-                    && x >= 0.0
-                    && x <= size.0
-                    && y >= 0.0
-                    && y <= size.1;
+                    && x >= -HIT_MARGIN
+                    && x <= size.0 + HIT_MARGIN
+                    && y >= -HIT_MARGIN
+                    && y <= size.1 + HIT_MARGIN;
 
                 let accept = on_island || dragging;
                 if gate.ignoring.load(Ordering::Relaxed) == accept {

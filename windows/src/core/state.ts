@@ -142,6 +142,9 @@ class AppState {
 
   lastActivity = performance.now();
 
+  /** Height of any top AppBar (e.g. PowerToys Command Palette Dock), in logical px. */
+  topBar = 0;
+
   settings: Settings = { ...DEFAULT_SETTINGS };
 
   private listeners = new Set<Listener>();

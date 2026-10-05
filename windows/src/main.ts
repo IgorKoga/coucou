@@ -19,6 +19,7 @@ async function main() {
   const boot = await Bridge.boot();
   if (boot) {
     State.settings = { ...State.settings, ...boot.settings };
+    State.topBar = boot.screen.topBar ?? 0;
   }
   island.applySettings();
   State.loadIntegrationTasks();
@@ -51,7 +52,14 @@ async function main() {
     }
   });
 
-  await onEvent<null>("screen-changed", () => void Bridge.reposition());
+  await onEvent<null>("screen-changed", async () => {
+    void Bridge.reposition();
+    const fresh = await Bridge.boot();
+    if (fresh) {
+      State.topBar = fresh.screen.topBar ?? 0;
+      island.updateGeometry();
+    }
+  });
 
   await onEvent<null>("top-hover", () => {
     Sound.resume();
