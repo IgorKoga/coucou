@@ -93,7 +93,7 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool) {
     let pref = shared.settings.lock().unwrap().screen.clone();
     shared.gate.collapsed.store(collapsed, Ordering::Relaxed);
     island::apply_geometry(&app, &pref, collapsed);
-    // The wake strip must always take the mouse, and a resize invalidates the flag.
+    island::set_ignore_cursor(&app, false);
     island::refresh_click_through(&app, &shared.gate);
     shared.gate.set_active(!collapsed);
 }
