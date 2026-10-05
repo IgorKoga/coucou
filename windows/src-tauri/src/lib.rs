@@ -95,7 +95,7 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool) {
     island::apply_geometry(&app, &pref, collapsed);
     island::set_ignore_cursor(&app, false);
     island::refresh_click_through(&app, &shared.gate);
-    shared.gate.set_active(!collapsed);
+    shared.gate.set_active(true);
 }
 
 /// The front end pushes the island shape; Rust decides click-through from it.

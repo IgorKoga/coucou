@@ -53,6 +53,11 @@ async function main() {
 
   await onEvent<null>("screen-changed", () => void Bridge.reposition());
 
+  await onEvent<null>("top-hover", () => {
+    Sound.resume();
+    if (State.mode === "hidden") island.fsm.mouseEntered();
+  });
+
   // The settings window writes preferences; apply them here without a restart.
   await onEvent<Settings>("settings-changed", (s) => {
     State.settings = { ...State.settings, ...s };
