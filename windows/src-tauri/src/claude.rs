@@ -76,6 +76,10 @@ pub async fn send(
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
+    if model.starts_with("gemini") {
+        return send_gemini(chat, model, query, context).await;
+    }
+
     let key = secrets::get("anthropic-api-key")
         .ok_or_else(|| "API key missing. Open settings.".to_string())?;
 
@@ -155,6 +159,164 @@ pub async fn send(
         return Err("No response text.".into());
     }
     Ok(ChatReply { text })
+}
+
+async fn send_gemini(
+    chat: &Chat,
+    model: &str,
+    query: String,
+    context: Option<ChatContext>,
+) -> Result<ChatReply, String> {
+    let key = secrets::get("gemini-api-key")
+        .or_else(|| secrets::get("anthropic-api-key"))
+        .ok_or_else(|| "Gemini API key missing. Open settings.".to_string())?;
+
+    let mut parts: Vec<Value> = Vec::new();
+
+    if chat.is_empty() {
+        match &context {
+            Some(ChatContext::File { name, path }) => {
+                if let Some(part) = gemini_file_part(path) {
+                    parts.push(part);
+                }
+                parts.push(json!({ "text": format!("File: {name}") }));
+            }
+            Some(ChatContext::Window { app_name, title, url }) => {
+                let mut text = format!("Context — App: {app_name}, Window: {title}");
+                if let Some(url) = url {
+                    text.push_str(&format!(", URL: {url}"));
+                }
+                parts.push(json!({ "text": text }));
+            }
+            None => {}
+        }
+    }
+    parts.push(json!({ "text": query }));
+
+    chat.push(json!({ "role": "user", "parts": parts }));
+
+    let mut contents: Vec<Value> = Vec::new();
+    for msg in chat.snapshot() {
+        let role = match msg.get("role").and_then(Value::as_str) {
+            Some("user") => "user",
+            Some("assistant") | Some("model") => "model",
+            _ => "user",
+        };
+        if let Some(p) = msg.get("parts").and_then(Value::as_array) {
+            contents.push(json!({ "role": role, "parts": p }));
+        } else if let Some(c) = msg.get("content").and_then(Value::as_array) {
+            let text_parts: Vec<Value> = c
+                .iter()
+                .filter_map(|b| {
+                    b.get("text")
+                        .and_then(Value::as_str)
+                        .map(|t| json!({ "text": t }))
+                })
+                .collect();
+            contents.push(json!({ "role": role, "parts": text_parts }));
+        }
+    }
+
+    let body = json!({
+        "systemInstruction": {
+            "parts": [{ "text": SYSTEM_PROMPT }]
+        },
+        "contents": contents,
+        "generationConfig": {
+            "maxOutputTokens": MAX_TOKENS
+        }
+    });
+
+    let endpoint = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .post(&endpoint)
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {e}"))?;
+
+    let status = response.status();
+    let text = response.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        chat.pop();
+        let detail = serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|v| {
+                v.get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| text.chars().take(200).collect());
+        return Err(format!("Gemini API {status}: {detail}"));
+    }
+
+    let res_json: Value =
+        serde_json::from_str(&text).map_err(|e| format!("Bad Gemini response: {e}"))?;
+
+    let reply_text = res_json
+        .get("candidates")
+        .and_then(|c| c.get(0))
+        .and_then(|c0| c0.get("content"))
+        .and_then(|c| c.get("parts"))
+        .and_then(|p| p.get(0))
+        .and_then(|p0| p0.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    if reply_text.is_empty() {
+        chat.pop();
+        return Err("No response text from Gemini.".into());
+    }
+
+    chat.push(json!({
+        "role": "model",
+        "parts": [{ "text": reply_text.clone() }]
+    }));
+
+    Ok(ChatReply { text: reply_text })
+}
+
+fn gemini_file_part(path: &str) -> Option<Value> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let media_type = match ext.as_str() {
+        "pdf" => Some("application/pdf"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    };
+
+    if let Some(media) = media_type {
+        let bytes = std::fs::read(path).ok()?;
+        return Some(json!({
+            "inline_data": { "mime_type": media, "data": base64(&bytes) }
+        }));
+    }
+
+    let len = std::fs::metadata(path).ok()?.len();
+    if len > MAX_INLINE_TEXT {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(json!({ "text": format!("File contents:\n{text}") }))
 }
 
 async fn call(key: &str, body: &Value) -> Result<Value, String> {

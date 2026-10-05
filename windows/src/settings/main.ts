@@ -177,56 +177,98 @@ const MODELS: [string, string][] = [
   ["claude-opus-5", "Claude Opus 5"],
   ["claude-sonnet-5", "Claude Sonnet 5"],
   ["claude-haiku-4-5", "Claude Haiku 4.5"],
+  ["gemini-2.5-flash", "Gemini 2.5 Flash"],
+  ["gemini-2.5-pro", "Gemini 2.5 Pro"],
+  ["gemini-1.5-flash", "Gemini 1.5 Flash"],
+  ["gemini-1.5-pro", "Gemini 1.5 Pro"],
 ];
 
-function apiSection(hasKey: boolean): HTMLElement {
-  const dot = statusDot(hasKey);
-  const state = h("span", { class: "hint", text: hasKey ? "Key saved in the Windows Credential Manager." : "No key yet — the chat needs one." });
+function apiSection(hasClaudeKey: boolean, hasGeminiKey: boolean): HTMLElement {
+  const dotClaude = statusDot(hasClaudeKey);
+  const dotGemini = statusDot(hasGeminiKey);
 
-  const field = h("input", {
+  const claudeField = h("input", {
     type: "password",
-    placeholder: hasKey ? "••••••••••••  (stored)" : "sk-ant-...",
+    placeholder: hasClaudeKey ? "••••••••••••  (stored)" : "sk-ant-...",
     style: "flex:1 1 auto;min-width:0",
     autocomplete: "off",
     spellcheck: "false",
   }) as HTMLInputElement;
 
-  const saveBtn = h("button", { class: "primary", text: "Save key" });
-  const clearBtn = h("button", { class: "danger", text: "Remove" });
+  const geminiField = h("input", {
+    type: "password",
+    placeholder: hasGeminiKey ? "••••••••••••  (stored)" : "AIzaSy...",
+    style: "flex:1 1 auto;min-width:0",
+    autocomplete: "off",
+    spellcheck: "false",
+  }) as HTMLInputElement;
+
+  const saveClaudeBtn = h("button", { class: "primary", text: "Save" });
+  const clearClaudeBtn = h("button", { class: "danger", text: "Remove" });
+
+  const saveGeminiBtn = h("button", { class: "primary", text: "Save" });
+  const clearGeminiBtn = h("button", { class: "danger", text: "Remove" });
+
   const feedback = h("div", {});
 
   async function refresh() {
-    const present = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
-    dot.style.background = present ? "#22c55e" : "#f4505e";
-    state.textContent = present
-      ? "Key saved in the Windows Credential Manager."
-      : "No key yet — the chat needs one.";
-    field.placeholder = present ? "••••••••••••  (stored)" : "sk-ant-...";
-    clearBtn.style.display = present ? "" : "none";
+    const pClaude = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
+    const pGemini = (await Bridge.secretPresent("gemini-api-key")) ?? false;
+    dotClaude.style.background = pClaude ? "#22c55e" : "#f4505e";
+    dotGemini.style.background = pGemini ? "#22c55e" : "#f4505e";
+    claudeField.placeholder = pClaude ? "••••••••••••  (stored)" : "sk-ant-...";
+    geminiField.placeholder = pGemini ? "••••••••••••  (stored)" : "AIzaSy...";
+    clearClaudeBtn.style.display = pClaude ? "" : "none";
+    clearGeminiBtn.style.display = pGemini ? "" : "none";
   }
 
-  saveBtn.addEventListener("click", async () => {
-    const value = field.value.trim();
+  saveClaudeBtn.addEventListener("click", async () => {
+    const value = claudeField.value.trim();
     if (!value) return;
     clear(feedback);
     try {
       await Bridge.secretSet("anthropic-api-key", value);
-      field.value = "";
-      feedback.append(h("div", { class: "notice ok", text: "Saved. It never touches disk." }));
+      claudeField.value = "";
+      feedback.append(h("div", { class: "notice ok", text: "Claude key saved." }));
       await refresh();
     } catch (err) {
-      feedback.append(h("div", { class: "notice err", text: `Could not save: ${String(err)}` }));
+      feedback.append(h("div", { class: "notice err", text: `Could not save Claude key: ${String(err)}` }));
     }
   });
 
-  clearBtn.addEventListener("click", async () => {
+  clearClaudeBtn.addEventListener("click", async () => {
     clear(feedback);
     try {
       await Bridge.secretClear("anthropic-api-key");
-      feedback.append(h("div", { class: "notice ok", text: "Key removed." }));
+      feedback.append(h("div", { class: "notice ok", text: "Claude key removed." }));
       await refresh();
     } catch (err) {
-      feedback.append(h("div", { class: "notice err", text: `Could not remove: ${String(err)}` }));
+      feedback.append(h("div", { class: "notice err", text: `Could not remove Claude key: ${String(err)}` }));
+    }
+  });
+
+  saveGeminiBtn.addEventListener("click", async () => {
+    const value = geminiField.value.trim();
+    if (!value) return;
+    clear(feedback);
+    try {
+      await Bridge.secretSet("gemini-api-key", value);
+      geminiField.value = "";
+      feedback.append(h("div", { class: "notice ok", text: "Gemini key saved." }));
+      await refresh();
+    } catch (err) {
+      feedback.append(h("div", { class: "notice err", text: `Could not save Gemini key: ${String(err)}` }));
+    }
+  });
+
+  clearGeminiBtn.addEventListener("click", async () => {
+    clear(feedback);
+    try {
+      await Bridge.secretClear("gemini-api-key");
+      feedback.append(h("div", { class: "notice ok", text: "Gemini key removed." }));
+      await refresh();
+    } catch (err) {
+      feedback.append(h("div", { class: "notice err", text: `Could not remove Gemini key: ${String(err)}` }));
     }
   });
 
@@ -241,15 +283,17 @@ function apiSection(hasKey: boolean): HTMLElement {
     void save();
   });
 
-  clearBtn.style.display = hasKey ? "" : "none";
+  clearClaudeBtn.style.display = hasClaudeKey ? "" : "none";
+  clearGeminiBtn.style.display = hasGeminiKey ? "" : "none";
 
   return h(
     "section",
     {},
-    h("h2", {}, dot, h("span", { text: "Claude" })),
-    state,
-    h("div", { class: "row" }, h("label", { text: "API key" }), field, saveBtn, clearBtn),
-    h("div", { class: "row" }, h("label", { text: "Model" }), model),
+    h("h2", {}, dotClaude, h("span", { text: "AI Model & Provider API Keys" })),
+    h("div", { class: "hint", text: "Choose your active model and configure your Anthropic or Gemini API key." }),
+    h("div", { class: "row" }, h("label", { text: "Active Model" }), model),
+    h("div", { class: "row" }, h("label", { text: "Claude Key" }), claudeField, saveClaudeBtn, clearClaudeBtn),
+    h("div", { class: "row" }, h("label", { text: "Gemini Key" }), geminiField, saveGeminiBtn, clearGeminiBtn),
     feedback,
   );
 }
@@ -429,7 +473,8 @@ async function main() {
     installed: false, settingsPath: "", hookPath: "", hookReady: false,
   };
 
-  const hasKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
+  const hasClaudeKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
+  const hasGeminiKey = (await Bridge.secretPresent("gemini-api-key")) ?? false;
 
   const keys = [
     "stripe-api-key", "github-token", "vercel-token",
@@ -442,7 +487,7 @@ async function main() {
   root.append(
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
     claudeSection(status),
-    apiSection(hasKey),
+    apiSection(hasClaudeKey, hasGeminiKey),
     integrationsSection(present),
     generalSection(),
     h("div", {
